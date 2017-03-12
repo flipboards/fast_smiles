@@ -8,9 +8,9 @@ Last modified in 2017, by Yanze Wu.
 #ifndef SMILES_H
 #define SMILES_H
 
-#include<vector>
-#include<list>
-#include<map>
+#include <vector>
+#include <list>
+#include <map>
 
 #define maxhnum		0x08
 #define maxnhcon	0x08
@@ -18,19 +18,15 @@ Last modified in 2017, by Yanze Wu.
 
 using namespace std;
 
-// turn data into score
-int to_score(int weight, int hydrogen, int connection);
-// atom score to hydrogen number
-int score2hydro(int score);
-// atom score to weight
-int score2weight(int score);
-
 class smiles {
 public:
 	smiles() {}
 
-	//push an atom back with smiles score
-	void push_back(int score);
+	//push an atom back with smiles score. do not use directly.
+	void _push_back(int score);
+
+	//push a child to an atom without changing score. do not use directly.
+	void _push_child(int parent, int child);
 
 	//push an atom back with weight, hydrogennumber (-1 for default hydrogen)
 	void push_atom(int weight, int hydrogen=-1);
@@ -102,6 +98,16 @@ private:
 
 	//interpreter atom symbol
 	int read_atom(const string& input, map<int, int>& loops, bool hydrogen=true);
+
+	// turn data into score
+	static int to_score(int weight, int hydrogen, int connection);
+
+	// atom score to hydrogen number
+	static int score2hydro(int score);
+	
+	// atom score to weight
+	static int score2weight(int score);
+
 };
 
 

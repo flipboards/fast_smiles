@@ -1,13 +1,10 @@
 //a newer version of molecule
-#include"smiles.h"
-#include<stack>
-#include<string>
-#include<functional>
-#include"tablesort.h"
-#include"elementname.h"
-
-// #define lettermode	1
-// #define hmode		2
+#include <stack>
+#include <string>
+#include <functional>
+#include "smiles.h"
+#include "tablesort.h"
+#include "elementname.h"
 
 #define char2int(x) ((x) - 48)
 #define HydrogenName ElementNameL[0]
@@ -23,21 +20,29 @@ inline bool isShort(const char name) {
 	return find(ShortNames.begin(), ShortNames.end(), name) != ShortNames.end();
 }
 
-int to_score(int weight, int hydrogen, int connection) {
+// compatibility for old stl
+inline string _to_string(int i) {
+	return std::to_string(static_cast<long long>(i));
+}
+
+int smiles::to_score(int weight, int hydrogen, int connection) {
 	return hydrogen + (weight + connection*maxatmwht)*maxhnum;
 }
 
-inline int score2weight(int score) {
+int smiles::score2weight(int score) {
 	return (score / maxhnum) % maxatmwht;
 }
-inline int score2hydro(int score) {
+int smiles::score2hydro(int score) {
 	return score % maxhnum;
 }
 
 // interface
 
-void smiles::push_back(int score) {
+void smiles::_push_back(int score) {
 	atoms.push_back(snode(score));
+}
+void smiles::_push_child(int parent, int child) {
+	atoms[parent].children.push_back(child);
 }
 
 void smiles::push_atom(int weight, int hydrogen) {
@@ -215,7 +220,7 @@ void smiles::compile(bool hydrogen)
 	vector<string> loopmark(atoms.size());
 	int crtloopid = 1;
 	for (unsigned int i = 0; i < loops.size(); i++)
-		loopmark[loops[i].second] += std::to_string(i + 1);
+		loopmark[loops[i].second] += _to_string(i + 1);
 
 	symbol = compilepart(0, children_list, loopmark, hydrogen);
 }
@@ -243,7 +248,7 @@ void smiles::scanloop(int index, int parent, vector<list<int> >& children_list, 
 string smiles::compilepart(int index, vector<list<int> >& children_list, const vector<string>& loopmark, bool hydrogen)const {
 	//roots
 	if (index < 0) {
-		return std::to_string(-index);
+		return _to_string(-index);
 	}
 
 	string result = "";
@@ -252,7 +257,7 @@ string smiles::compilepart(int index, vector<list<int> >& children_list, const v
 
 	if (hydrogen) {
 		string hydrogen_str;
-		if (score2hydro(atoms[index].score) > 1)hydrogen_str = HydrogenName + std::to_string(score2hydro(atoms[index].score));
+		if (score2hydro(atoms[index].score) > 1)hydrogen_str = HydrogenName + _to_string(score2hydro(atoms[index].score));
 		else if (score2hydro(atoms[index].score) == 1)hydrogen_str = HydrogenName;
 
 		if (!hydrogen_str.empty()) {
@@ -268,102 +273,6 @@ string smiles::compilepart(int index, vector<list<int> >& children_list, const v
 	}
 	return result;
 }
-/*
-void smiles::read_smiles(const string& symbol) {
-	//first read the atom, then scan the connectivity
-
-	struct bond { int id_1, id_2; };
-	vector<bond> loops;
-
-	enum{nomode, lettermode, hmode};
-	auto mode = lettermode;
-
-	stack<size_t> atomstack;
-	string name_buffer;
-	int prev_cnt = -1;
-
-	auto s = symbol.begin();
-	while (s != symbol.end()) {
-		if (*s >= 'A' && *s != 'H' && mode == lettermode)name_buffer.push_back(*s);
-		else if (*s < 'A' && *s >= '0') {
-			//end letter
-			switch (mode)
-			{
-			case lettermode:
-				mode = nomode;
-				atomstack.push(atoms.size());
-				atoms.push_back(snode(maxhnum * nameL2weight(name_buffer)));
-				name_buffer.clear();
-				if (prev_cnt >= 0) {
-					atoms.back().children.push_back(prev_cnt);
-					atoms[prev_cnt].children.push_back(atoms.size() - 1);
-				}
-			case nomode:
-				if (loops.size() < char2int(*s)) {
-					loops.resize(char2int(*s)); loops[char2int(*s)].id_1 = atoms.size() - 1;
-				}
-				else loops[char2int(*s)].id_2 = atoms.size() - 1;
-				break;
-			case hmode:
-				atoms.back().score += char2int(*s);
-				mode = nomode;
-				break;
-			default:
-				break;
-			}
-		}
-		else if (*s == 'h') {
-			if (mode == lettermode) {
-				atomstack.push(atoms.size());
-				atoms.push_back(snode(maxhnum * nameL2weight(name_buffer)));
-				name_buffer.clear();
-				if (prev_cnt >= 0) {
-					atoms.back().children.push_back(prev_cnt);
-					atoms[prev_cnt].children.push_back(atoms.size() - 1);
-				}
-			}
-			mode = hmode;
-		}
-		else if (*s == '-' || *s == '(' || *s == ')') {
-			if (mode == lettermode) {
-				atomstack.push(atoms.size());
-				atoms.push_back(snode(maxhnum * nameL2weight(name_buffer)));
-				name_buffer.clear();
-				if (prev_cnt >= 0) {
-					atoms.back().children.push_back(prev_cnt);
-					atoms[prev_cnt].children.push_back(atoms.size() - 1);
-				}
-			}
-			else if (mode == hmode) {
-				atoms.back().score += 1;
-				mode = nomode;
-			}
-			prev_cnt = atomstack.top(); mode = lettermode;
-			if (*s != '(')atomstack.pop();
-		}
-		s++;
-	}
-	if (mode == lettermode) {
-		atoms.push_back(snode(maxhnum * nameL2weight(name_buffer)));
-		name_buffer.clear();
-		if (prev_cnt >= 0) {
-			atoms.back().children.push_back(prev_cnt);
-			atoms[prev_cnt].children.push_back(atoms.size() - 1);
-		}
-	}
-	else if (mode == hmode) {
-		atoms.back().score += 1;
-		mode = nomode;
-	}
-
-	for (auto loop : loops) {
-		atoms[loop.id_1].children.push_back(loop.id_2);
-		atoms[loop.id_2].children.push_back(loop.id_1);
-	}
-	for (auto atom = atoms.begin(); atom != atoms.end(); atom++) {
-		atom->score += maxhnum*maxatmwht*atom->children.size();
-	}
-}*/
 
 void smiles::read_smiles(const string& input, bool read_hydrogen) {
 	stack<string::const_iterator> braket_stack;

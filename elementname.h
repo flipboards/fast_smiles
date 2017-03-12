@@ -33,6 +33,6 @@ const map<string, int> NameLWeight = {
 const string ShortNames = "HBCNOFPS";
 
 const map<int, int> DefaultHydrogen = {
-	{1, 0}, {3, 1}, {8, 2}, {11, 3}, {12, 4}, {14, 3}, {16, 2}, {19, 1},
+	{1, 1}, {3, 1}, {8, 2}, {11, 3}, {12, 4}, {14, 3}, {16, 2}, {19, 1},
 	{23, 0}, {24, 0}, {27, 3}, {28, 4}, {31, 3}, {32, 2}, {35, 1}
 };
