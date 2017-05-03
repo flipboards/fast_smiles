@@ -14,10 +14,28 @@ const int primes[35] = {
 	73,79,83,89,97, 101,103,107,109,113, 127,131,137,139,149
 };
 
+const char bond_symbol[4] = {
+	'~', '-', '=', '@'
+};
+
+inline int min(int a, int b) {
+	return a < b ? a : b;
+}
+
 /* Assistant functions */
 
 inline bool isShort(const char name) {
 	return find(ShortNames.begin(), ShortNames.end(), name) != ShortNames.end();
+}
+
+inline char getBondSymbol(int order) {
+	try {
+		return bond_symbol[order];
+	}
+	catch (const out_of_range&) {
+		printf("Warning: bond order %d is not defined", order);
+		return '*';
+	}
 }
 
 // compatibility for old stl
@@ -25,14 +43,14 @@ inline string _to_string(int i) {
 	return std::to_string(static_cast<long long>(i));
 }
 
-int smiles::to_score(int weight, int hydrogen, int connection) {
-	return hydrogen + (weight + connection*maxatmwht)*maxhnum;
+atomscore_t smiles::to_score(int weight, int hydrogen, int nhconn, int bond) {
+	return hydrogen + (bond + (weight + nhconn*maxatmwht)*maxbond)*maxhnum;
 }
 
-int smiles::score2weight(int score) {
-	return (score / maxhnum) % maxatmwht;
+int smiles::score2weight(atomscore_t score) {
+	return (score / (maxhnum * maxbond)) % maxatmwht;
 }
-int smiles::score2hydro(int score) {
+int smiles::score2hydro(atomscore_t score) {
 	return score % maxhnum;
 }
 
@@ -41,23 +59,23 @@ int smiles::score2hydro(int score) {
 void smiles::_push_back(int score) {
 	atoms.push_back(snode(score));
 }
-void smiles::_push_child(int parent, int child) {
-	atoms[parent].children.push_back(child);
+void smiles::_push_child(int parent, int child, int order) {
+	atoms[parent].children.push_back({ child, order });
 }
 
 void smiles::push_atom(int weight, int hydrogen) {
 	if (hydrogen == -1)hydrogen = DefaultHydrogen.at(weight);
-	atoms.push_back(snode(to_score(weight, hydrogen, 0)));
+	atoms.push_back(snode(to_score(weight, hydrogen, 0, hydrogen)));
 }
 
-void smiles::connect_atom(int atom1, int atom2, bool change_hydrogen) {
-	atoms[atom1].children.push_back(atom2);
-	atoms[atom2].children.push_back(atom1);
-	atoms[atom1].score += maxatmwht * maxhnum;
-	atoms[atom2].score += maxatmwht * maxhnum;
+void smiles::connect_atom(int atom1, int atom2, int order, bool change_hydrogen) {
+	atoms[atom1].children.push_back({ atom2, order });
+	atoms[atom2].children.push_back({ atom1, order });
+	atoms[atom1].score += maxatmwht * maxhnum * maxbond + maxhnum * order;
+	atoms[atom2].score += maxatmwht * maxhnum * maxbond + maxhnum * order;
 	if (change_hydrogen){
-		if (score2hydro(atoms[atom1].score) > 0)atoms[atom1].score--;
-		if (score2hydro(atoms[atom2].score) > 0)atoms[atom2].score--;
+		atoms[atom1].score -= min(order, score2hydro(atoms[atom1].score));
+		atoms[atom2].score -= min(order, score2hydro(atoms[atom2].score));
 	}
 }
 
@@ -83,8 +101,9 @@ bool smiles::compare(const smiles& sms, int myindex, int hisindex, bool* mark)co
 	if (atoms[myindex].children.size() != sms.atoms[hisindex].children.size())return false;
 	for (auto mychild = atoms[myindex].children.begin(), hischild = sms.atoms[hisindex].children.begin();
 		mychild != atoms[myindex].children.end(); mychild++, hischild++) {
-		if (mark[*mychild])continue;
-		if (!compare(sms, *mychild, *hischild, mark))return false;
+		if (mark[mychild->first])continue;
+		if (mychild->second != hischild->second)return false;
+		if (!compare(sms, mychild->first, hischild->first, mark))return false;
 	}
 	return true;
 }
@@ -95,9 +114,9 @@ void smiles::canonicalize()
 {
 	//1.copy data (score and childtmp is modifyable)
 	vector<list<int> > _children_tmp(atoms.size());//neighbour
-	vector<int> _score(atoms.size()), rank(atoms.size());//score is the unstable score; no matter what happens, score is host. rank is client.
+	vector<atomscore_t> _score(atoms.size()), rank(atoms.size());//score is the unstable score; no matter what happens, score is host. rank is client.
 	for (unsigned int i = 0; i < atoms.size(); i++) {
-		_children_tmp[i] = atoms[i].children;
+		_children_tmp[i] = atoms[i].neighbour_list();
 		_score[i] = atoms[i].score;
 	}
 
@@ -111,7 +130,7 @@ void smiles::canonicalize()
 	
 	//take atom weight into account...
 	for (unsigned int i = 0; i < _score.size(); i++) {
-		_score[i] = rank[i] * maxatmwht * maxhnum * maxnhcon + atoms[i].score;
+		_score[i] = rank[i] * maxatmwht * maxhnum * maxnhcon * maxbond + atoms[i].score;
 	}
 	rankby(_score, rank);
 
@@ -133,29 +152,29 @@ void smiles::canonicalize()
 
 	//4.O( Nlog(N) ) rank atoms
 	auto rank_cpy = rank;
-	sortwith(rank_cpy, atoms, less<int>());//put the order of atoms
+	sortwith(rank_cpy, atoms, less<atomscore_t>());//put the order of atoms
 
 	//O(N*m) (replace children and rank children, as at this time children is the old index)
 	for (auto& atom : atoms) {
 		for (auto& child : atom.children)
-			child = rank[child];
-		atom.children.sort(greater<int>());
+			child.first = rank[child.first];
+		atom.children.sort(greater<pair<int, int> >());
 	}
 }
-bool smiles::rankby(vector<int>& score, vector<int>& rank) {
+bool smiles::rankby(vector<atomscore_t>& score, vector<atomscore_t>& rank) {
 	//a more complex algorithm...
 	//first we rank the array, then...
 
 	vector<int> sort_result(score.size());
 	for (unsigned int i = 0; i < score.size(); i++)
 		sort_result[i] = i;
-	sortby(sort_result, score, less<int>());
+	sortby(sort_result, score, less<atomscore_t>());
 
 	//compare and delete equal rank
 	//backup old rank
-	vector<int> _newrank(rank.size());
+	vector<atomscore_t> _newrank(rank.size());
 
-	int highest_in_old = 0;
+	atomscore_t highest_in_old = 0;
 	for (const auto& r : rank)
 		if (r > highest_in_old)highest_in_old = r;
 
@@ -172,21 +191,21 @@ bool smiles::rankby(vector<int>& score, vector<int>& rank) {
 	}
 	else return false;
 }
-bool smiles::renew_score(const int index, const vector<int>& rank, const list<int>& _children_tmp, vector<int>& score) {
-	int oldscore = score[index];
+bool smiles::renew_score(const int index, const vector<atomscore_t>& rank, const list<int>& _children_tmp, vector<atomscore_t>& score) {
+	atomscore_t oldscore = score[index];
 	score[index] = 1;
 	for (auto child : _children_tmp) {
 		score[index] *= primes[rank[child]];
 	}
 	return score[index] >= oldscore;
 }
-void smiles::label(int index, int& crtlabel, vector<list<int> >& children, const vector<int>& symclass, vector<int>& labels) {
+void smiles::label(int index, int& crtlabel, vector<list<int> >& children, const vector<atomscore_t>& symclass, vector<atomscore_t>& labels) {
 	//remove already labeled
 	for (auto child = children[index].begin(); child != children[index].end();) {
 		if (labels[*child] >= 0)child = children[index].erase(child);
 		else child++;
 	}
-	sortby(children[index], symclass, greater<int>());
+	sortby(children[index], symclass, greater<atomscore_t>());
 
 	//then, label children
 	for (const auto& child : children[index]) {
@@ -207,11 +226,11 @@ string smiles::to_smiles(bool hydrogen) {
 	return symbol;
 }
 
-void smiles::compile(bool hydrogen)
+void smiles::compile(bool hydrogen, bool single_bond)
 {
 	//first dfs: scan loop&delete parent
 	vector<pair<int, int> > loops;
-	vector<list<int> > children_list(atoms.size(), list<int>());
+	vector<list<pair<int, int> > > children_list(atoms.size(), list<pair<int, int> >());
 	bool* mark = new bool[atoms.size()]{ 0 };
 
 	scanloop(0, -1, children_list, loops, mark);
@@ -219,33 +238,37 @@ void smiles::compile(bool hydrogen)
 
 	vector<string> loopmark(atoms.size());
 	int crtloopid = 1;
-	for (unsigned int i = 0; i < loops.size(); i++)
+	for (unsigned int i = 0; i < loops.size(); i++) {
+		if (!loopmark[loops[i].second].empty()) {
+			loopmark[loops[i].second].push_back(',');
+		}
 		loopmark[loops[i].second] += _to_string(i + 1);
+	}
 
-	symbol = compilepart(0, children_list, loopmark, hydrogen);
+	symbol = compilepart(0, children_list, loopmark, hydrogen, single_bond);
 }
-void smiles::scanloop(int index, int parent, vector<list<int> >& children_list, vector<pair<int, int> >& loops, bool* mark)const
+void smiles::scanloop(int index, int parent, vector<list<pair<int, int> > >& children_list, vector<pair<int, int> >& loops, bool* mark)const
 {
 	mark[index] = true;
 	for (const auto& child : atoms[index].children) {
-		if (child == parent) {
+		if (child.first == parent) {
 			continue;
 		}
 		else {
-			if (mark[child]) {
-				if (find(loops.begin(), loops.end(), pair<int, int>{child, index}) == loops.end()) {
-					loops.push_back(pair<int, int>{index, child});
-					children_list[index].push_back(-(int)loops.size());	//use minus number to represent loop
+			if (mark[child.first]) {
+				if (find(loops.begin(), loops.end(), pair<int, int>{child.first, index}) == loops.end()) {
+					loops.push_back(pair<int, int>{index, child.first});
+					children_list[index].push_back({ -(int)loops.size(), child.second });	//use minus number to represent loop
 				}
 			}
 			else {
 				children_list[index].push_back(child);
-				scanloop(child, index, children_list, loops, mark);
+				scanloop(child.first, index, children_list, loops, mark);
 			}
 		}
 	}
 }
-string smiles::compilepart(int index, vector<list<int> >& children_list, const vector<string>& loopmark, bool hydrogen)const {
+string smiles::compilepart(int index, vector<list<pair<int, int> > >& children_list, const vector<string>& loopmark, bool hydrogen, bool single_bond)const {
 	//roots
 	if (index < 0) {
 		return _to_string(-index);
@@ -266,10 +289,19 @@ string smiles::compilepart(int index, vector<list<int> >& children_list, const v
 	}
 
 	for (auto child = children_list[index].rbegin(); child != children_list[index].rend(); child++) {
-		if (child == --children_list[index].rend())
-			result += compilepart(*child, children_list, loopmark, hydrogen);
-		else
-			result += "(" + compilepart(*child, children_list, loopmark, hydrogen) + ")";
+		if (child == --children_list[index].rend()) {
+			if (single_bond || child->second != 1) {
+				result.push_back(getBondSymbol(child->second));
+			}
+			result += compilepart(child->first, children_list, loopmark, hydrogen, single_bond);
+		}
+		else {
+			result += "(";
+			if (single_bond || child->second != 1) {
+				result.push_back(getBondSymbol(child->second));
+			}
+			result += compilepart(child->first, children_list, loopmark, hydrogen, single_bond) + ")";
+		}
 	}
 	return result;
 }
@@ -287,7 +319,7 @@ void smiles::read_smiles(const string& input, bool read_hydrogen) {
 			if (braket_stack.empty()) {
 				atoms.push_back(snode(read_atom(string(last_bra_pos, s + 1), loop_roots, read_hydrogen)));
 				if (!atom_stack.empty()) {
-					connect_atom(atom_stack.top(), atoms.size() - 1, false);
+					connect_atom(atom_stack.top(), atoms.size() - 1, 1, false);
 					atom_stack.pop();
 				}
 				atom_stack.push(atoms.size() - 1);
@@ -299,7 +331,7 @@ void smiles::read_smiles(const string& input, bool read_hydrogen) {
 		else if (braket_stack.empty() && isShort(*s)) { // trivial
 			atoms.push_back(snode(read_atom(string(s, s + 1), loop_roots, read_hydrogen)));
 			if (!atom_stack.empty()) {
-				connect_atom(atom_stack.top(), atoms.size() - 1, false);
+				connect_atom(atom_stack.top(), atoms.size() - 1, 1, false);
 				atom_stack.pop();
 			}			
 			atom_stack.push(atoms.size() - 1);
@@ -308,13 +340,13 @@ void smiles::read_smiles(const string& input, bool read_hydrogen) {
 			auto root = loop_roots.find(char2int(*s));
 			if (root == loop_roots.end())loop_roots[char2int(*s)] = atoms.size() - 1;
 			else {
-				connect_atom(root->second, atoms.size() - 1, false);
+				connect_atom(root->second, atoms.size() - 1, 1, false);
 			}
 		}
 	}
 }
 
-int smiles::read_atom(const string& input, map<int, int>& loops, bool read_hydrogen) {
+atomscore_t smiles::read_atom(const string& input, map<int, int>& loops, bool read_hydrogen) {
 	string atom_str;
 	string::const_iterator atom_end;
 
@@ -351,32 +383,14 @@ int smiles::read_atom(const string& input, map<int, int>& loops, bool read_hydro
 		if (*(atom_end + 1) == ']')hydrogen = 1;
 		else hydrogen = char2int(*(atom_end + 1));
 	}
-	return to_score(weight, hydrogen, 0);
+	return to_score(weight, hydrogen, 0, hydrogen);
 }
 
-// binary io functions
-
-unsigned int smiles::to_bin(char* buffer)const {
-	int* p = (int*)buffer;
-	*p = atoms.size(); p++;
-	for (const auto& atom : atoms) {
-		*p = atom.score; p++;
-		*p = atom.children.size(); p++;
-		for (const auto& child : atom.children) {
-			*p = child; p++;
-		}
+list<int> smiles::snode::neighbour_list() const
+{
+	list<int> neighbours;
+	for (const auto& child : children) {
+		neighbours.push_back(child.first);
 	}
-	return (p - (int*)buffer) * sizeof(int);
+	return neighbours;
 }
-void smiles::read_bin(char* buffer) {
-	int* p = (int*)buffer;
-	atoms.resize(*p); p++;
-	for (auto& atom : atoms) {
-		atom.score = *p; p++;
-		atom.children.resize(*p); p++;
-		for (auto& child : atom.children) {
-			child = *p; p++;
-		}
-	}
-}
-

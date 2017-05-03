@@ -14,9 +14,12 @@ Last modified in 2017, by Yanze Wu.
 
 #define maxhnum		0x08
 #define maxnhcon	0x08
+#define maxbond		0x08
 #define maxatmwht	0x80
 
 using namespace std;
+
+typedef int64_t atomscore_t;
 
 class smiles {
 public:
@@ -26,13 +29,13 @@ public:
 	void _push_back(int score);
 
 	//push a child to an atom without changing score. do not use directly.
-	void _push_child(int parent, int child);
+	void _push_child(int parent, int child, int order=1);
 
-	//push an atom back with weight, hydrogennumber (-1 for default hydrogen)
+	//create an atom back with weight, hydrogennumber (-1 for default hydrogen)
 	void push_atom(int weight, int hydrogen=-1);
 
 	//connect a parent with child
-	void connect_atom(int atom1, int atom2, bool change_hydrogen=true);
+	void connect_atom(int atom1, int atom2, int order=1, bool change_hydrogen=true);
 
 	//number of atoms
 	size_t size()const { return atoms.size(); }
@@ -47,7 +50,7 @@ public:
 	void canonicalize();
 	
 	//Write the string form in symbol
-	void compile(bool hydrogen=true);
+	void compile(bool hydrogen=true, bool single_bond=false);
 
 	//output smiles without check if compiled before.
 	string to_string()const { return symbol; }
@@ -58,18 +61,14 @@ public:
 	//read smiles string. This function may contain error.
 	void read_smiles(const string& sms, bool read_hydrogen=true);
 
-	//written binary form. Do not use directly.
-	unsigned int to_bin(char* buffer)const;
-
-	//read binary form. Do not use directly.
-	void read_bin(char* buffer);
-
 private:
 	struct snode {
-		int score;
-		list<int> children;
-		snode() { score = 0; }
-		snode(int _score) { score = _score; }
+		atomscore_t score;
+		list<pair<int, int> > children; // children name, bond order (can be 0, 1, 2, ...)
+		snode() : score (0){ }
+		snode(atomscore_t _score) : score (_score){ }
+
+		list<int> neighbour_list()const;
 	};							//children tree node.
 	vector<snode> atoms;		//atom list
 	string symbol;				//string of chain.
@@ -77,13 +76,13 @@ private:
 	/* functions used in converting */
 
 	//rank atoms by its score, and write into rank
-	bool rankby(vector<int>& score, vector<int>& rank);
+	bool rankby(vector<atomscore_t>& score, vector<atomscore_t>& rank);
 
 	//update score by scores of neighbours
-	bool renew_score(const int index, const vector<int>& rank, const list<int>& _children_tmp, vector<int>& score);
+	bool renew_score(const int index, const vector<atomscore_t>& rank, const list<int>& _children_tmp, vector<atomscore_t>& score);
 
 	//label each atom
-	void label(int index, int& crtlabel, vector<list<int> >& bonds, const vector<int>& rank, vector<int>& score);
+	void label(int index, int& crtlabel, vector<list<int> >& bonds, const vector<atomscore_t>& rank, vector<atomscore_t>& score);
 
 	//recursive compare function. Do not use directly.
 	bool compare(const smiles& sms, int myindex, int hisindex, bool* mark)const;
@@ -91,22 +90,22 @@ private:
 	/* functions used in compiling */
 
 	//scans the loop of smiles, and write into looproots
-	void scanloop(int index, int parent, vector<list<int> >& children_list, vector<pair<int, int> >&, bool* mark)const;
+	void scanloop(int index, int parent, vector<list<pair<int, int> > >& children_list, vector<pair<int, int> >&, bool* mark)const;
 
 	//recursive compile function. Do not use directly.
-	string compilepart(int index, vector<list<int> >& children_list, const vector<string>& loopmark, bool hydrogen)const;
+	string compilepart(int index, vector<list<pair<int, int> > >& children_list, const vector<string>& loopmark, bool hydrogen, bool single_bond)const;
 
 	//interpreter atom symbol
-	int read_atom(const string& input, map<int, int>& loops, bool hydrogen=true);
+	atomscore_t read_atom(const string& input, map<int, int>& loops, bool hydrogen=true);
 
 	// turn data into score
-	static int to_score(int weight, int hydrogen, int connection);
+	static atomscore_t to_score(int weight, int hydrogen, int nhconn, int bond);
 
 	// atom score to hydrogen number
-	static int score2hydro(int score);
+	static int score2hydro(atomscore_t score);
 	
 	// atom score to weight
-	static int score2weight(int score);
+	static int score2weight(atomscore_t score);
 
 };
 

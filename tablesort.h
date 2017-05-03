@@ -6,7 +6,7 @@ using namespace std;
 
 //sort a index vector by score using bubble sort. Pred means the order of head to tail.
 template<typename type, typename order>
-void sortby(vector<type>& source, const vector<int>& score, const order pred) {
+void sortby(vector<type>& source, const vector<atomscore_t>& score, const order pred) {
 	for (unsigned int i = 0; i < source.size() - 1; i++) {
 		for (auto source_j = source.begin(); source_j < source.end() - 1 - i; source_j++) {
 			if (pred(score[*(source_j+1)], score[*source_j])) {
@@ -18,7 +18,7 @@ void sortby(vector<type>& source, const vector<int>& score, const order pred) {
 
 //sort a index list by score using bubble sort. Pred means the order of head to tail.
 template<typename type, typename order>
-void sortby(list<type>& source, const vector<int>& score, const order pred) {
+void sortby(list<type>& source, const vector<atomscore_t>& score, const order pred) {
 	if (source.empty())return;
 	auto sort_end = source.end();
 	while(sort_end != source.begin()) {
